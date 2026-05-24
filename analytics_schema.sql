@@ -6,6 +6,7 @@
 -- TABLE: crossover_analytics
 -- PURPOSE: Store trade outcome metrics for each crossover interval
 -- ═════════════════════════════════════════════════════════════════════════════
+-- Drop the crossover_analytics table and all its data
 
 CREATE TABLE IF NOT EXISTS crossover_analytics (
     -- ═════════════════════════════════════════════════════════════════════════
@@ -39,9 +40,13 @@ CREATE TABLE IF NOT EXISTS crossover_analytics (
     -- ═════════════════════════════════════════════════════════════════════════
     
     -- Optimal entry: Best possible entry price in the trade window
-    -- LONG:  Lowest low between crossovers
-    -- SHORT: Highest high between crossovers
+    -- LONG:  Lowest low BEFORE MFE peak
+    -- SHORT: Highest high BEFORE MFE bottom
     optimal_entry NUMERIC(20, 8) NOT NULL,
+    
+    -- UTC timestamp when optimal entry occurred
+    -- Critical for understanding timing: how long after crossover was best entry?
+    optimal_entry_utc TIMESTAMPTZ NOT NULL,
     
     -- MFE (Maximum Favorable Excursion): Peak profit potential (%)
     -- LONG:  (highest high - entry) / entry × 100
@@ -141,7 +146,10 @@ COMMENT ON COLUMN crossover_analytics.crossover_utc IS
 'UTC timestamp of EMA crossover. Primary key for merging with main dataset. MUST match exact UTC format from main database.';
 
 COMMENT ON COLUMN crossover_analytics.optimal_entry IS 
-'Best possible entry price in trade window. LONG = lowest low, SHORT = highest high.';
+'Best possible entry price that existed BEFORE the MFE peak. LONG = lowest low before highest high, SHORT = highest high before lowest low. Temporal constraint enforced: t(optimal_entry) < t(MFE).';
+
+COMMENT ON COLUMN crossover_analytics.optimal_entry_utc IS 
+'UTC timestamp when optimal entry price occurred. Shows timing window between crossover and best entry opportunity.';
 
 COMMENT ON COLUMN crossover_analytics.mfe_percent IS 
 'Maximum Favorable Excursion - peak profit potential from entry. Always positive for profitable moves.';

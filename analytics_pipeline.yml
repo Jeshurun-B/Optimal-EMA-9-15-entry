@@ -1,0 +1,111 @@
+# .github/workflows/analytics_pipeline.yml
+name: EMA Analytics Pipeline
+
+on:
+  schedule:
+    # Runs automatically every 30 hours
+    # Note: GitHub Actions cron only supports intervals up to 24 hours
+    # We'll use 30 hours via a different approach (see workflow_dispatch)
+    # For now, run daily at 3 AM UTC (offset from main pipeline)
+    - cron: "0 3 * * *"
+  
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task to run"
+        required: true
+        default: "incremental"
+        type: choice
+        options:
+          - incremental      # Daily updates (fast, 1-5 minutes)
+          - initial-backfill # Full 250-day historical fetch (slow, 15-30 minutes)
+          - validate         # Run validation checks only
+
+jobs:
+  run-analytics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90  # Extended timeout for initial backfill
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Execute Analytics Task
+        env:
+          # Analytics Supabase credentials (separate from main pipeline)
+          ANALYTICS_SUPABASE_URL: ${{ secrets.ANALYTICS_SUPABASE_URL }}
+          ANALYTICS_SUPABASE_KEY: ${{ secrets.ANALYTICS_SUPABASE_KEY }}
+          
+          # Coins to analyze (should match main pipeline)
+          ANALYTICS_COINS: ${{ secrets.ANALYTICS_COINS || secrets.COINS }}
+          
+          # Historical lookback settings
+          ANALYTICS_HISTORICAL_DAYS: ${{ secrets.ANALYTICS_HISTORICAL_DAYS || '250' }}
+          ANALYTICS_INCREMENTAL_DAYS: ${{ secrets.ANALYTICS_INCREMENTAL_DAYS || '3' }}
+          
+          # API rate limit
+          ANALYTICS_API_CALL_LIMIT: ${{ secrets.ANALYTICS_API_CALL_LIMIT || '500' }}
+          
+          # Binance API base URL
+          BINANCE_BASE_URL: ${{ secrets.BINANCE_BASE_URL || 'https://data-api.binance.vision' }}
+          
+          # Task selection
+          TASK: ${{ github.event.inputs.task || 'incremental' }}
+        
+        run: |
+          echo "=============================================="
+          echo "EMA Analytics Pipeline - Starting"
+          echo "=============================================="
+          echo "Task: ${TASK}"
+          echo "Scheduled run: ${{ github.event_name == 'schedule' }}"
+          echo "Manual trigger: ${{ github.event_name == 'workflow_dispatch' }}"
+          echo "=============================================="
+          
+          case "${TASK}" in
+            initial-backfill)
+              echo "🔵 Running INITIAL BACKFILL (250 days)"
+              echo "⏱️  Expected duration: 15-30 minutes"
+              echo "📊 This will fetch ~24,000 candles per coin"
+              echo ""
+              python analytics_pipeline.py --initial
+              ;;
+            
+            validate)
+              echo "🔍 Running VALIDATION CHECKS"
+              echo ""
+              python validate_analytics.py
+              ;;
+            
+            incremental|*)
+              echo "🟢 Running INCREMENTAL UPDATE"
+              echo "⏱️  Expected duration: 1-5 minutes"
+              echo "📊 Fetching only new data since last run"
+              echo ""
+              python analytics_pipeline.py
+              ;;
+          esac
+          
+          echo ""
+          echo "=============================================="
+          echo "Analytics Pipeline - Complete"
+          echo "=============================================="
+      
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: analytics-error-logs
+          path: |
+            analytics_error.log
+            analytics_state.json
+          retention-days: 7

@@ -144,7 +144,7 @@ LOOKFORWARD_CANDLES = 500
 #   - Too fast, likely noise/whipsaw
 #   - Not enough data for meaningful MFE/MAE calculation
 #   - Skip this interval
-MIN_TRADE_CANDLES = 5
+MIN_TRADE_CANDLES = 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,189 @@
+# .github/workflows/analytics_smart_schedule.yml
+name: EMA Analytics - Smart Schedule (Every 30 Hours)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PROBLEM: GitHub Actions cron only supports 24-hour intervals
+# SOLUTION: Run twice daily, but skip execution if < 30 hours since last run
+# 
+# HOW IT WORKS:
+#   1. Workflow triggers every 12 hours
+#   2. Script checks last run timestamp in analytics_state.json
+#   3. If < 30 hours since last run → skip execution
+#   4. If >= 30 hours → run analytics pipeline
+# 
+# RESULT: Effective ~30 hour interval between runs
+# ═════════════════════════════════════════════════════════════════════════════
+
+on:
+  schedule:
+    # Run every 12 hours to check if we should execute
+    - cron: "0 */12 * * *"
+  
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force run (ignore 30-hour check)"
+        required: false
+        default: false
+        type: boolean
+      
+      task:
+        description: "Task type"
+        required: false
+        default: "incremental"
+        type: choice
+        options:
+          - incremental
+          - initial-backfill
+
+jobs:
+  check-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # ═══════════════════════════════════════════════════════════════════════
+      #                    CHECK IF WE SHOULD RUN
+      # ═══════════════════════════════════════════════════════════════════════
+      
+      - name: Check Last Run Time
+        id: check-schedule
+        env:
+          ANALYTICS_SUPABASE_URL: ${{ secrets.ANALYTICS_SUPABASE_URL }}
+          ANALYTICS_SUPABASE_KEY: ${{ secrets.ANALYTICS_SUPABASE_KEY }}
+          FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
+        run: |
+          # Create Python script to check last run time
+          cat > check_schedule.py << 'EOF'
+          import os
+          import sys
+          from datetime import datetime, timezone, timedelta
+          
+          # Check if force run
+          if os.getenv("FORCE_RUN", "").lower() == "true":
+              print("✅ Force run enabled - skipping time check")
+              sys.exit(0)  # Continue execution
+          
+          try:
+              # Try to read analytics state
+              import json
+              with open("analytics_state.json", "r") as f:
+                  state = json.load(f)
+              
+              # Get last run time from any symbol's last_processed timestamp
+              last_run = None
+              for symbol, data in state.items():
+                  if isinstance(data, dict) and "last_processed" in data:
+                      timestamp = datetime.fromisoformat(data["last_processed"].replace("Z", "+00:00"))
+                      if last_run is None or timestamp > last_run:
+                          last_run = timestamp
+              
+              if last_run is None:
+                  print("ℹ️  No previous run found - proceeding with execution")
+                  sys.exit(0)  # Continue execution
+              
+              # Calculate hours since last run
+              now = datetime.now(timezone.utc)
+              hours_since = (now - last_run).total_seconds() / 3600
+              
+              print(f"Last run: {last_run}")
+              print(f"Current time: {now}")
+              print(f"Hours since last run: {hours_since:.1f}")
+              
+              if hours_since < 30:
+                  print(f"⏭️  Skipping - only {hours_since:.1f} hours since last run (need 30+)")
+                  sys.exit(1)  # Skip execution
+              else:
+                  print(f"✅ Proceeding - {hours_since:.1f} hours since last run")
+                  sys.exit(0)  # Continue execution
+          
+          except FileNotFoundError:
+              print("ℹ️  State file not found - this is likely the first run")
+              sys.exit(0)  # Continue execution
+          
+          except Exception as e:
+              print(f"⚠️  Error checking schedule: {e}")
+              print("ℹ️  Proceeding with execution to be safe")
+              sys.exit(0)  # Continue execution on error
+          EOF
+          
+          # Run the check
+          python check_schedule.py
+          
+          # Capture exit code
+          echo "should_run=$?" >> $GITHUB_OUTPUT
+      
+      # ═══════════════════════════════════════════════════════════════════════
+      #                    RUN ANALYTICS PIPELINE
+      # ═══════════════════════════════════════════════════════════════════════
+      
+      - name: Run Analytics Pipeline
+        if: steps.check-schedule.outputs.should_run == '0'
+        env:
+          ANALYTICS_SUPABASE_URL: ${{ secrets.ANALYTICS_SUPABASE_URL }}
+          ANALYTICS_SUPABASE_KEY: ${{ secrets.ANALYTICS_SUPABASE_KEY }}
+          ANALYTICS_COINS: ${{ secrets.ANALYTICS_COINS || secrets.COINS }}
+          ANALYTICS_HISTORICAL_DAYS: ${{ secrets.ANALYTICS_HISTORICAL_DAYS || '250' }}
+          ANALYTICS_INCREMENTAL_DAYS: ${{ secrets.ANALYTICS_INCREMENTAL_DAYS || '3' }}
+          ANALYTICS_API_CALL_LIMIT: ${{ secrets.ANALYTICS_API_CALL_LIMIT || '500' }}
+          BINANCE_BASE_URL: ${{ secrets.BINANCE_BASE_URL || 'https://data-api.binance.vision' }}
+          TASK: ${{ github.event.inputs.task || 'incremental' }}
+        
+        run: |
+          echo "=============================================="
+          echo "EMA Analytics Pipeline"
+          echo "=============================================="
+          echo "Task: ${TASK}"
+          echo "Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=============================================="
+          
+          case "${TASK}" in
+            initial-backfill)
+              echo "🔵 INITIAL BACKFILL MODE"
+              python analytics_pipeline.py --initial
+              ;;
+            *)
+              echo "🟢 INCREMENTAL UPDATE MODE"
+              python analytics_pipeline.py
+              ;;
+          esac
+      
+      - name: Upload State File
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: analytics-state
+          path: analytics_state.json
+          retention-days: 30
+      
+      - name: Upload Error Logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: analytics-error-logs
+          path: analytics_error.log
+          retention-days: 7
+      
+      - name: Skipped Execution Notice
+        if: steps.check-schedule.outputs.should_run != '0'
+        run: |
+          echo "=============================================="
+          echo "⏭️  EXECUTION SKIPPED"
+          echo "=============================================="
+          echo "Reason: Less than 30 hours since last run"
+          echo "This is expected - workflow checks every 12 hours"
+          echo "but only runs when 30+ hours have passed"
+          echo "=============================================="
