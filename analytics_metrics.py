@@ -25,10 +25,23 @@ def calculate_trade_metrics(
     Calculate comprehensive trade metrics for a crossover interval.
     
     METRICS CALCULATED:
-        1. Optimal Entry: Best possible entry price in the window
+        1. Optimal Entry: Best possible entry price BEFORE MFE peak
         2. MFE (Maximum Favorable Excursion): Peak profit potential
-        3. MAE (Maximum Adverse Excursion): Worst drawdown
+        3. MAE (Maximum Adverse Excursion): Worst drawdown before MFE
         4. Trade Duration: Number of candles in window
+    
+    CRITICAL TEMPORAL CONSTRAINT:
+        Optimal Entry MUST occur chronologically BEFORE the MFE peak.
+        If the best price occurs AFTER the peak, it's invalid (too late).
+        
+        Example (LONG):
+            Window: [100, 95, 110, 90]
+            MFE peak: 110 (index 2)
+            Optimal entry: 95 (index 1) ✅ VALID - occurs before peak
+            Invalid: 90 (index 3) ❌ INVALID - occurs after peak
+        
+        This ensures the optimal entry represents a realistic opportunity
+        that existed BEFORE maximum profit was achieved.
     
     Args:
         df: DataFrame with [timestamp, open, high, low, close, volume]
@@ -40,7 +53,7 @@ def calculate_trade_metrics(
     Returns:
         Dictionary with metrics:
             {
-                "optimal_entry": Best entry price,
+                "optimal_entry": Best entry price (before MFE peak),
                 "mfe_percent": Max favorable move (%),
                 "mae_percent": Max adverse move (%),
                 "trade_duration": Number of candles,
@@ -53,7 +66,7 @@ def calculate_trade_metrics(
             - Missing data
     
     Example:
-        # LONG signal: entered at $100, looking for best entry and max profit/loss
+        # LONG signal: entered at $100
         metrics = calculate_trade_metrics(
             df=candles,
             signal_type="LONG",
@@ -64,19 +77,25 @@ def calculate_trade_metrics(
         
         if metrics:
             print(f"Optimal entry: ${metrics['optimal_entry']:.2f}")
+            # Optimal entry is the lowest price BEFORE the highest peak
             print(f"Max profit potential: {metrics['mfe_percent']:.2f}%")
             print(f"Worst drawdown: {metrics['mae_percent']:.2f}%")
-            print(f"Trade lasted {metrics['trade_duration']} candles")
     
     LOGIC FOR LONG SIGNALS:
-        - Optimal Entry: Lowest low in the window (best buy price)
-        - MFE: Highest high in the window (peak profit)
-        - MAE: Lowest low before reaching MFE (worst drawdown)
+        1. Find MFE: highest high in entire window (peak profit target)
+        2. Extract "before peak" window: all candles from start to MFE
+        3. Optimal Entry: lowest low in "before peak" window
+        4. MAE: also calculated from "before peak" window
+        
+        Constraint: t(optimal_entry) < t(MFE) ← temporal ordering enforced
     
     LOGIC FOR SHORT SIGNALS:
-        - Optimal Entry: Highest high in the window (best sell price)
-        - MFE: Lowest low in the window (peak profit)
-        - MAE: Highest high before reaching MFE (worst drawdown)
+        1. Find MFE: lowest low in entire window (peak profit target)
+        2. Extract "before bottom" window: all candles from start to MFE
+        3. Optimal Entry: highest high in "before bottom" window
+        4. MAE: also calculated from "before bottom" window
+        
+        Constraint: t(optimal_entry) < t(MFE) ← temporal ordering enforced
     """
     
     # Validate inputs
@@ -105,29 +124,37 @@ def calculate_trade_metrics(
     # ══════════════════════════════════════════════════════════════════════════
     
     if signal_type == "LONG":
-        # Optimal entry: lowest low in window (best buy price)
-        optimal_entry = float(window["low"].min())
-        
         # MFE: highest high in window (peak profit potential)
+        # THIS MUST BE FOUND FIRST - optimal entry depends on it
         peak_price = float(window["high"].max())
+        peak_idx_in_window = window["high"].idxmax()
         mfe_percent = ((peak_price - entry_price) / entry_price) * 100
         
-        # MAE: worst drawdown before reaching peak
-        # Find index of peak
-        peak_idx_in_window = window["high"].idxmax()
-        
-        # Get candles before peak
+        # Optimal entry: lowest low BEFORE the MFE peak
+        # CRITICAL CONSTRAINT: Optimal entry must occur chronologically BEFORE MFE
+        # If lowest price occurs AFTER the peak, it's invalid (too late to enter)
         before_peak = window.loc[:peak_idx_in_window]
         
         if not before_peak.empty:
-            # Worst price before peak = lowest low
+            optimal_entry_idx = before_peak["low"].idxmin()
+            optimal_entry = float(before_peak.loc[optimal_entry_idx, "low"])
+            optimal_entry_utc = df.loc[optimal_entry_idx, "timestamp"].isoformat()
+        else:
+            # Edge case: peak is at first candle, no "before" window
+            optimal_entry = float(window.iloc[0]["low"])
+            optimal_entry_utc = df.iloc[start_idx]["timestamp"].isoformat()
+        
+        # MAE: worst drawdown before reaching peak
+        # This is the same window as optimal entry (before peak)
+        if not before_peak.empty:
             worst_price = float(before_peak["low"].min())
             mae_percent = ((worst_price - entry_price) / entry_price) * 100
         else:
-            mae_percent = 0.0  # No drawdown
+            mae_percent = 0.0  # No drawdown if peak at start
         
         return {
             "optimal_entry": round(optimal_entry, 8),
+            "optimal_entry_utc": optimal_entry_utc,
             "mfe_percent": round(mfe_percent, 2),
             "mae_percent": round(mae_percent, 2),
             "trade_duration": trade_duration,
@@ -139,29 +166,37 @@ def calculate_trade_metrics(
     # ══════════════════════════════════════════════════════════════════════════
     
     elif signal_type == "SHORT":
-        # Optimal entry: highest high in window (best sell price)
-        optimal_entry = float(window["high"].max())
-        
-        # MFE: lowest low in window (peak profit potential)
+        # MFE: lowest low in window (peak profit potential for short)
+        # THIS MUST BE FOUND FIRST - optimal entry depends on it
         bottom_price = float(window["low"].min())
+        bottom_idx_in_window = window["low"].idxmin()
         mfe_percent = ((entry_price - bottom_price) / entry_price) * 100
         
-        # MAE: worst drawdown before reaching peak
-        # Find index of bottom
-        bottom_idx_in_window = window["low"].idxmin()
-        
-        # Get candles before bottom
+        # Optimal entry: highest high BEFORE the MFE bottom
+        # CRITICAL CONSTRAINT: Optimal entry must occur chronologically BEFORE MFE
+        # If highest price occurs AFTER the bottom, it's invalid (too late to enter)
         before_bottom = window.loc[:bottom_idx_in_window]
         
         if not before_bottom.empty:
-            # Worst price before bottom = highest high
+            optimal_entry_idx = before_bottom["high"].idxmax()
+            optimal_entry = float(before_bottom.loc[optimal_entry_idx, "high"])
+            optimal_entry_utc = df.loc[optimal_entry_idx, "timestamp"].isoformat()
+        else:
+            # Edge case: bottom is at first candle, no "before" window
+            optimal_entry = float(window.iloc[0]["high"])
+            optimal_entry_utc = df.iloc[start_idx]["timestamp"].isoformat()
+        
+        # MAE: worst drawdown before reaching peak
+        # This is the same window as optimal entry (before bottom)
+        if not before_bottom.empty:
             worst_price = float(before_bottom["high"].max())
             mae_percent = ((entry_price - worst_price) / entry_price) * 100
         else:
-            mae_percent = 0.0  # No drawdown
+            mae_percent = 0.0  # No drawdown if bottom at start
         
         return {
             "optimal_entry": round(optimal_entry, 8),
+            "optimal_entry_utc": optimal_entry_utc,
             "mfe_percent": round(mfe_percent, 2),
             "mae_percent": round(mae_percent, 2),
             "trade_duration": trade_duration,
