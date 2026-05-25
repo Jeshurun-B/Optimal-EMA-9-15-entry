@@ -189,6 +189,7 @@ def process_symbol(symbol: str, is_initial_run: bool = False) -> int:
             "signal": xo["signal"],
             "entry_price": xo["price"],
             "optimal_entry": metrics["optimal_entry"],
+            "optimal_entry_utc": metrics["optimal_entry_utc"],  # FIX: was missing
             "mfe_percent": metrics["mfe_percent"],
             "mae_percent": metrics["mae_percent"],
             "trade_duration": metrics["trade_duration"],
