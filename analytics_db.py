@@ -194,20 +194,49 @@ def bulk_insert_analytics(records: list) -> int:
     """
     if not records:
         return 0
-    
+
+    # ── PRE-FLIGHT: drop any record that has a None in a required column ──────
+    # A single None in a NOT NULL column aborts the entire batch transaction.
+    # Required columns that must never be None:
+    REQUIRED_COLS = [
+        "crossover_utc", "symbol", "signal", "entry_price",
+        "optimal_entry", "optimal_entry_utc",
+        "mfe_percent", "mae_percent", "trade_duration",
+        "next_crossover_utc", "exit_price", "pnl_percent",
+    ]
+    clean_records = []
+    skipped = 0
+    for rec in records:
+        if any(rec.get(col) is None for col in REQUIRED_COLS):
+            missing = [c for c in REQUIRED_COLS if rec.get(c) is None]
+            log_analytics_error(
+                f"bulk_insert_analytics: skipping incomplete record "
+                f"symbol={rec.get('symbol')} crossover_utc={rec.get('crossover_utc')} "
+                f"missing={missing}"
+            )
+            skipped += 1
+        else:
+            clean_records.append(rec)
+
+    if skipped:
+        print(f"  ⚠️  Skipped {skipped} incomplete record(s) before insert (see error log)")
+
+    if not clean_records:
+        return 0
+
     try:
         # Try batch insert first (fastest)
-        analytics_client.table(ANALYTICS_TABLE).insert(records).execute()
-        return len(records)
-    
+        analytics_client.table(ANALYTICS_TABLE).insert(clean_records).execute()
+        return len(clean_records)
+
     except Exception as e:
         log_analytics_error(f"bulk_insert_analytics failed: {repr(e)}")
-        
+
         # Fall back to individual inserts
         # This handles mixed cases (some duplicates, some new)
         success_count = 0
-        for record in records:
+        for record in clean_records:
             if insert_analytics(record):
                 success_count += 1
-        
+
         return success_count

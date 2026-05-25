@@ -127,30 +127,34 @@ def calculate_trade_metrics(
         # MFE: highest high in window (peak profit potential)
         # THIS MUST BE FOUND FIRST - optimal entry depends on it
         peak_price = float(window["high"].max())
-        peak_idx_in_window = window["high"].idxmax()
         mfe_percent = ((peak_price - entry_price) / entry_price) * 100
-        
-        # Optimal entry: lowest low BEFORE the MFE peak
-        # CRITICAL CONSTRAINT: Optimal entry must occur chronologically BEFORE MFE
-        # If lowest price occurs AFTER the peak, it's invalid (too late to enter)
-        before_peak = window.loc[:peak_idx_in_window]
-        
+
+        # Reset index so positional slicing is safe regardless of original df labels.
+        # peak_pos is a plain integer (0-based) within this window.
+        window_reset = window.reset_index(drop=True)
+        peak_pos = int(window_reset["high"].idxmax())
+
+        # Safe fallback: crossover candle itself
+        optimal_entry = float(window_reset.iloc[0]["low"])
+        optimal_entry_utc = df.iloc[start_idx]["timestamp"].isoformat()
+
+        # Optimal entry: lowest low BEFORE (and including) the MFE peak.
+        # CRITICAL CONSTRAINT: t(optimal_entry) < t(MFE) — enforced by slicing
+        # up to and including peak_pos so the crossover candle is always included.
+        before_peak = window_reset.iloc[: peak_pos + 1]
+
         if not before_peak.empty:
-            optimal_entry_idx = before_peak["low"].idxmin()
-            optimal_entry = float(before_peak.loc[optimal_entry_idx, "low"])
-            optimal_entry_utc = df.loc[optimal_entry_idx, "timestamp"].isoformat()
-        else:
-            # Edge case: peak is at first candle, no "before" window
-            optimal_entry = float(window.iloc[0]["low"])
-            optimal_entry_utc = df.iloc[start_idx]["timestamp"].isoformat()
-        
-        # MAE: worst drawdown before reaching peak
-        # This is the same window as optimal entry (before peak)
+            best_pos = int(before_peak["low"].idxmin())
+            optimal_entry = float(before_peak.loc[best_pos, "low"])
+            # Map back to the original df to get the correct timestamp
+            optimal_entry_utc = df.iloc[start_idx + best_pos]["timestamp"].isoformat()
+
+        # MAE: worst low in the same pre-peak window
         if not before_peak.empty:
             worst_price = float(before_peak["low"].min())
             mae_percent = ((worst_price - entry_price) / entry_price) * 100
         else:
-            mae_percent = 0.0  # No drawdown if peak at start
+            mae_percent = 0.0
         
         return {
             "optimal_entry": round(optimal_entry, 8),
@@ -169,30 +173,32 @@ def calculate_trade_metrics(
         # MFE: lowest low in window (peak profit potential for short)
         # THIS MUST BE FOUND FIRST - optimal entry depends on it
         bottom_price = float(window["low"].min())
-        bottom_idx_in_window = window["low"].idxmin()
         mfe_percent = ((entry_price - bottom_price) / entry_price) * 100
-        
-        # Optimal entry: highest high BEFORE the MFE bottom
-        # CRITICAL CONSTRAINT: Optimal entry must occur chronologically BEFORE MFE
-        # If highest price occurs AFTER the bottom, it's invalid (too late to enter)
-        before_bottom = window.loc[:bottom_idx_in_window]
-        
+
+        # Reset index so positional slicing is safe regardless of original df labels.
+        window_reset = window.reset_index(drop=True)
+        bottom_pos = int(window_reset["low"].idxmin())
+
+        # Safe fallback: crossover candle itself
+        optimal_entry = float(window_reset.iloc[0]["high"])
+        optimal_entry_utc = df.iloc[start_idx]["timestamp"].isoformat()
+
+        # Optimal entry: highest high BEFORE (and including) the MFE bottom.
+        # CRITICAL CONSTRAINT: t(optimal_entry) < t(MFE) — enforced by slicing
+        # up to and including bottom_pos so the crossover candle is always included.
+        before_bottom = window_reset.iloc[: bottom_pos + 1]
+
         if not before_bottom.empty:
-            optimal_entry_idx = before_bottom["high"].idxmax()
-            optimal_entry = float(before_bottom.loc[optimal_entry_idx, "high"])
-            optimal_entry_utc = df.loc[optimal_entry_idx, "timestamp"].isoformat()
-        else:
-            # Edge case: bottom is at first candle, no "before" window
-            optimal_entry = float(window.iloc[0]["high"])
-            optimal_entry_utc = df.iloc[start_idx]["timestamp"].isoformat()
-        
-        # MAE: worst drawdown before reaching peak
-        # This is the same window as optimal entry (before bottom)
+            best_pos = int(before_bottom["high"].idxmax())
+            optimal_entry = float(before_bottom.loc[best_pos, "high"])
+            optimal_entry_utc = df.iloc[start_idx + best_pos]["timestamp"].isoformat()
+
+        # MAE: worst high in the same pre-bottom window
         if not before_bottom.empty:
             worst_price = float(before_bottom["high"].max())
             mae_percent = ((entry_price - worst_price) / entry_price) * 100
         else:
-            mae_percent = 0.0  # No drawdown if bottom at start
+            mae_percent = 0.0
         
         return {
             "optimal_entry": round(optimal_entry, 8),
