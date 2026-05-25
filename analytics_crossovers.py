@@ -57,8 +57,8 @@ def detect_crossovers(df: pd.DataFrame) -> list:
     
     # Calculate EMAs
     df = df.copy()
-    df["ema_fast"] = df["close"].ewm(span=EMA_FAST, adjust=False).mean()
-    df["ema_slow"] = df["close"].ewm(span=EMA_SLOW, adjust=False).mean()
+    df.loc[:, "ema_fast"] = df["close"].ewm(span=EMA_FAST, adjust=False).mean()
+    df.loc[:, "ema_slow"] = df["close"].ewm(span=EMA_SLOW, adjust=False).mean()
     
     # Drop NaN rows (warmup period)
     df = df.dropna(subset=["ema_fast", "ema_slow"]).reset_index(drop=True)
