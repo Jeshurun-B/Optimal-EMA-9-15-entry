@@ -2,7 +2,7 @@ name: Analytics Pipeline
 
 on:
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 2 * * *'   # Daily at 2 AM UTC
   workflow_dispatch:
     inputs:
       initial_backfill:
@@ -17,25 +17,41 @@ on:
 jobs:
   update-analytics:
     runs-on: ubuntu-latest
+    timeout-minutes: 90   # Needed for initial backfill (can take 15-30 min)
+
     steps:
       - uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'   # FIX: was '3.10', aligned to 3.11
 
       - name: Install dependencies
         run: pip install -r requirements_analytics.txt
-
 
       - name: Run analytics pipeline
         env:
           ANALYTICS_SUPABASE_URL: ${{ secrets.ANALYTICS_SUPABASE_URL }}
           ANALYTICS_SUPABASE_KEY: ${{ secrets.ANALYTICS_SUPABASE_KEY }}
+          # FIX: pass coins so the pipeline matches your main pipeline's symbols.
+          # Falls back to COINS secret if ANALYTICS_COINS isn't set separately.
+          ANALYTICS_COINS: ${{ secrets.ANALYTICS_COINS || secrets.COINS }}
         run: |
           if [ "${{ github.event.inputs.initial_backfill }}" = "true" ]; then
             python analytics_pipeline.py --initial
           else
             python analytics_pipeline.py
           fi
+
+      # FIX: added — uploads error log automatically on any failure
+      # so you can debug without SSHing anywhere
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: analytics-error-logs
+          path: |
+            analytics_error.log
+            analytics_state.json
+          retention-days: 7
