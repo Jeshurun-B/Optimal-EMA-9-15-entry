@@ -1,0 +1,41 @@
+name: Analytics Pipeline
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      initial_backfill:
+        description: 'Run initial backfill (250 days)?'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  update-analytics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install -r requirements_analytics.txt
+
+
+      - name: Run analytics pipeline
+        env:
+          ANALYTICS_SUPABASE_URL: ${{ secrets.ANALYTICS_SUPABASE_URL }}
+          ANALYTICS_SUPABASE_KEY: ${{ secrets.ANALYTICS_SUPABASE_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.initial_backfill }}" = "true" ]; then
+            python analytics_pipeline.py --initial
+          else
+            python analytics_pipeline.py
+          fi

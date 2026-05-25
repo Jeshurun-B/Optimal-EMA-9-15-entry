@@ -145,12 +145,13 @@ def fetch_historical_klines(
                 "taker_base_vol", "taker_quote_vol", "ignore"
             ])
             
-            # Convert timestamp
-            df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+            # Convert timestamp (avoid pandas FutureWarning)
+            df = df.copy()  # Create explicit copy
+            df.loc[:, "timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
             
             # Convert OHLCV to numeric
             for col in ["open", "high", "low", "close", "volume"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+                df.loc[:, col] = pd.to_numeric(df[col], errors="coerce")
             
             # Keep only needed columns
             df = df[["timestamp", "open", "high", "low", "close", "volume"]]
@@ -254,10 +255,11 @@ def fetch_from_timestamp(
             "taker_base_vol", "taker_quote_vol", "ignore"
         ])
         
-        df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+        df = df.copy()  # Create explicit copy
+        df.loc[:, "timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         
         for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df.loc[:, col] = pd.to_numeric(df[col], errors="coerce")
         
         return df[["timestamp", "open", "high", "low", "close", "volume"]].reset_index(drop=True)
     
