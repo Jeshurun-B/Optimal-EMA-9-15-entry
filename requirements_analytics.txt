@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-=======
-XT
->>>>>>> d94e18738dfb87c03b7c44a6037d779aeda6cff3
 # requirements_analytics.txt
 # ═════════════════════════════════════════════════════════════════════════════
 # Analytics Pipeline Dependencies
