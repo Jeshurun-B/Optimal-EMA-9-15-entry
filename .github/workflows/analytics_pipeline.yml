@@ -17,7 +17,7 @@ on:
 jobs:
   update-analytics:
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # Needed for initial backfill (can take 15-30 min)
+    timeout-minutes: 500   # Needed for initial backfill (can take 15-30 min)
 
     steps:
       - uses: actions/checkout@v4
