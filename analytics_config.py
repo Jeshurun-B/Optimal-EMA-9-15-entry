@@ -90,7 +90,7 @@ EMA_SLOW = 15
 # 
 # Note: If a coin doesn't have 250 days of data (newly listed),
 #       the pipeline will fetch whatever is available.
-HISTORICAL_DAYS = int(os.getenv("ANALYTICS_HISTORICAL_DAYS") or 250)
+HISTORICAL_DAYS = int(os.getenv("ANALYTICS_HISTORICAL_DAYS") or 2500)
 
 # Incremental update: How many days to look back when resuming
 # 
