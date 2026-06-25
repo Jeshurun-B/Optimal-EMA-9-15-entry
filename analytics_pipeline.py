@@ -116,7 +116,7 @@ def process_symbol(symbol: str, is_initial_run: bool = False) -> int:
         if last_utc:
             # We have existing data - fetch from last crossover forward
             days_since = (datetime.now(timezone.utc) - last_utc).days
-            days_to_fetch = HISTORICAL_DAYS#max(INCREMENTAL_LOOKBACK_DAYS, days_since + 1)
+            days_to_fetch = max(INCREMENTAL_LOOKBACK_DAYS, days_since + 1)
             print(f"Mode: Incremental update (last crossover: {last_utc.date()}, fetching {days_to_fetch} days)")
         
         else:
