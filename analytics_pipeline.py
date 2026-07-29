@@ -1,5 +1,5 @@
 # analytics_pipeline.py
-# ═════════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════
 # PURPOSE: Main orchestrator for the EMA Crossover Analytics Dataset Pipeline.
 #
 # WORKFLOW:
